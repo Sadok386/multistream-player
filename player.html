@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+}
+#container {
+    width: 100%;
+    height: 100%;
+    gap: 2px;
+}
+.player-container {
+    width: 100%;
+    height: 100%;
+    background: #000;
+    position: relative;
+}
+.full-width { grid-column: span 2; }
+</style>
+</head>
+<body>
+<div id="container"></div>
+<script>
+var players = [];
+var config = {};
+
+// --- URL Parsing (mirrors StreamUrlParser.parse()) ---
+function parseStreamUrl(url) {
+    var clean = url.trim()
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/\/$/, '');
+
+    if (clean.indexOf('twitch.tv/') === 0) return parseTwitch(clean, url);
+    if (clean.indexOf('youtube.com/') === 0) return parseYouTube(clean, url);
+    if (clean.indexOf('youtu.be/') === 0) return parseYouTubeShort(clean, url);
+    if (clean.indexOf('kick.com/') === 0) return parseKick(clean, url);
+    // Bare channel name -> assume Twitch
+    if (clean.indexOf('.') === -1 && clean.indexOf('/') === -1 && clean.length > 0) {
+        return { platform: 'twitch', id: clean, originalUrl: url };
+    }
+    return null;
+}
+
+function parseTwitch(clean, originalUrl) {
+    var parts = clean.replace('twitch.tv/', '').split('/');
+    if (!parts[0]) return null;
+    if (parts.length >= 2 && parts[1] === 'videos' && parts[2]) {
+        return { platform: 'twitch', id: parts[2], isVod: true, originalUrl: originalUrl };
+    }
+    return { platform: 'twitch', id: parts[0], isVod: false, originalUrl: originalUrl };
+}
+
+function parseYouTube(clean, originalUrl) {
+    var path = clean.replace('youtube.com/', '');
+    var videoId = null;
+    var isChannelLive = false;
+
+    if (path.indexOf('watch') === 0) {
+        var vIdx = path.indexOf('v=');
+        if (vIdx === -1) return null;
+        var start = vIdx + 2;
+        var end = path.indexOf('&', start);
+        videoId = end === -1 ? path.substring(start) : path.substring(start, end);
+    } else if (path.indexOf('live/') === 0) {
+        videoId = path.replace('live/', '').split('?')[0];
+    } else if (path.indexOf('embed/') === 0) {
+        videoId = path.replace('embed/', '').split('?')[0];
+    } else if (path.indexOf('@') === 0 && path.indexOf('/live') !== -1) {
+        var channel = path.split('/live')[0].replace('@', '');
+        return { platform: 'youtube', id: channel, isChannelLive: true, originalUrl: originalUrl };
+    } else {
+        return null;
+    }
+
+    return { platform: 'youtube', id: videoId, isChannelLive: false, originalUrl: originalUrl };
+}
+
+function parseYouTubeShort(clean, originalUrl) {
+    var videoId = clean.replace('youtu.be/', '').split('?')[0];
+    if (!videoId) return null;
+    return { platform: 'youtube', id: videoId, isChannelLive: false, originalUrl: originalUrl };
+}
+
+function parseKick(clean, originalUrl) {
+    var channel = clean.replace('kick.com/', '').split('/')[0].split('?')[0];
+    if (!channel) return null;
+    return { platform: 'kick', id: channel, originalUrl: originalUrl };
+}
+
+// --- Layout CSS ---
+function applyLayout(parsedStreams) {
+    var container = document.getElementById('container');
+    var count = parsedStreams.length;
+    var layout = config.layout || 'grid';
+    var landscape = config.landscape || false;
+
+    // Hybrid grid detection: Twitch needs >=400px width
+    var cellWidthPx = window.innerWidth / 2;
+    var hasTwitch = parsedStreams.some(function(s) { return s && s.platform === 'twitch'; });
+    var useHybridGrid = layout === 'grid' && count > 2 && cellWidthPx < 400 && hasTwitch;
+    var fullWidthIndices = {};
+    var hybridRowCount = 2;
+
+    if (useHybridGrid) {
+        var rows = [];
+        var pending = [];
+        parsedStreams.forEach(function(stream, index) {
+            if (!stream) return;
+            if (stream.platform === 'twitch') {
+                if (pending.length > 0) { rows.push(pending.slice()); pending = []; }
+                rows.push([index]);
+            } else {
+                pending.push(index);
+                if (pending.length === 2) { rows.push(pending.slice()); pending = []; }
+            }
+        });
+        if (pending.length > 0) rows.push(pending.slice());
+        rows.forEach(function(row) {
+            if (row.length === 1) fullWidthIndices[row[0]] = true;
+        });
+        hybridRowCount = rows.length;
+    }
+
+    if (layout === 'stack') {
+        container.style.display = 'flex';
+        container.style.flexDirection = landscape ? 'row' : 'column';
+    } else {
+        container.style.display = 'grid';
+        if (count === 1) {
+            // fullscreen, no explicit grid
+        } else if (count === 2) {
+            if (landscape) {
+                container.style.gridTemplateColumns = 'repeat(2, 1fr)';
+                container.style.gridTemplateRows = '1fr';
+            } else {
+                container.style.gridTemplateColumns = '1fr';
+                container.style.gridTemplateRows = 'repeat(2, 1fr)';
+            }
+        } else {
+            if (useHybridGrid) {
+                container.style.gridTemplateColumns = '1fr 1fr';
+                container.style.gridTemplateRows = 'repeat(' + hybridRowCount + ', 1fr)';
+            } else {
+                container.style.gridTemplateColumns = 'repeat(2, 1fr)';
+                container.style.gridTemplateRows = 'repeat(2, 1fr)';
+            }
+        }
+    }
+
+    // Apply per-container classes
+    parsedStreams.forEach(function(stream, index) {
+        var div = document.getElementById('player_' + index);
+        if (!div) return;
+        if (layout === 'stack') {
+            div.style.flex = '1';
+        }
+        if (fullWidthIndices[index]) {
+            div.classList.add('full-width');
+        }
+    });
+}
+
+// --- Build Players ---
+function buildPlayers(parsedStreams) {
+    var container = document.getElementById('container');
+    var mutedSet = {};
+    (config.muted || []).forEach(function(i) { mutedSet[i] = true; });
+    var pausedSet = {};
+    (config.paused || []).forEach(function(i) { pausedSet[i] = true; });
+
+    var hasYouTube = false;
+    var hasTwitch = false;
+
+    // Create divs
+    parsedStreams.forEach(function(stream, index) {
+        if (!stream) return;
+        var div = document.createElement('div');
+        div.id = 'player_' + index;
+        div.className = 'player-container';
+
+        if (stream.platform === 'kick') {
+            var muted = mutedSet[index] ? 'true' : 'false';
+            div.innerHTML = '<iframe id="player_' + index + '_iframe" ' +
+                'src="https://player.kick.com/__kick_bridge__?channel=' + stream.id + '&muted=' + muted + '" ' +
+                'allow="autoplay;encrypted-media" allowfullscreen ' +
+                'style="width:100%;height:100%;border:0"></iframe>';
+        }
+
+        container.appendChild(div);
+
+        if (stream.platform === 'youtube') hasYouTube = true;
+        if (stream.platform === 'twitch') hasTwitch = true;
+    });
+
+    // Apply layout after creating divs
+    applyLayout(parsedStreams);
+
+    // Load Twitch SDK if needed
+    if (hasTwitch) {
+        var script = document.createElement('script');
+        script.src = 'https://player.twitch.tv/js/embed/v1.js';
+        script.onload = function() { initTwitchPlayers(parsedStreams, mutedSet); };
+        document.head.appendChild(script);
+    }
+
+    // Load YouTube API if needed
+    if (hasYouTube) {
+        window._ytParsedStreams = parsedStreams;
+        window._ytMutedSet = mutedSet;
+        var script = document.createElement('script');
+        script.src = 'https://www.youtube.com/iframe_api';
+        document.head.appendChild(script);
+    }
+
+    // Init Kick players (no external SDK needed)
+    initKickPlayers(parsedStreams, mutedSet);
+}
+
+// --- YouTube Init ---
+function onYouTubeIframeAPIReady() {
+    var parsedStreams = window._ytParsedStreams;
+    var mutedSet = window._ytMutedSet;
+    var firstYoutubeIndex = -1;
+
+    parsedStreams.forEach(function(stream, index) {
+        if (!stream || stream.platform !== 'youtube') return;
+        if (firstYoutubeIndex === -1) firstYoutubeIndex = index;
+
+        var videoId = stream.id;
+        var isFirst = (index === firstYoutubeIndex);
+        var initialMuted = !!mutedSet[index];
+
+        players[index] = new YT.Player('player_' + index, {
+            height: '100%',
+            width: '100%',
+            playerVars: {
+                'playsinline': 1,
+                'controls': 1,
+                'enablejsapi': 1,
+                'origin': 'https://sadok386.github.io',
+                'rel': 0,
+                'fs': 0,
+                'iv_load_policy': 3
+            },
+            events: {
+                'onReady': (function(idx, vid, first, muted) {
+                    return function(event) {
+                        if (first) {
+                            event.target.loadVideoById(vid);
+                            if (muted) { event.target.mute(); }
+                            console.log('YT player ' + idx + ': loadVideoById, muted: ' + muted);
+                        } else {
+                            event.target.cueVideoById(vid);
+                            event.target.mute();
+                            console.log('YT player ' + idx + ': cued (paused, muted, compliance)');
+                        }
+                    };
+                })(index, videoId, isFirst, initialMuted),
+                'onStateChange': (function(idx) {
+                    return function(event) {
+                        var states = {'-1':'UNSTARTED','0':'ENDED','1':'PLAYING','2':'PAUSED','3':'BUFFERING','5':'CUED'};
+                        console.log('YT player ' + idx + ' state: ' + (states[event.data] || event.data));
+                    };
+                })(index),
+                'onError': (function(idx) {
+                    return function(event) {
+                        console.log('YT player ' + idx + ' error: ' + event.data);
+                    };
+                })(index)
+            }
+        });
+    });
+}
+
+// --- Twitch Init ---
+function initTwitchPlayers(parsedStreams, mutedSet) {
+    parsedStreams.forEach(function(stream, index) {
+        if (!stream || stream.platform !== 'twitch') return;
+
+        var opts = {
+            width: '100%',
+            height: '100%',
+            parent: ['sadok386.github.io'],
+            autoplay: true,
+            muted: true
+        };
+        if (stream.isVod) {
+            opts.video = stream.id;
+        } else {
+            opts.channel = stream.id;
+        }
+
+        var initialMuted = !!mutedSet[index];
+        players[index] = new Twitch.Player('player_' + index, opts);
+        players[index].addEventListener(Twitch.Player.READY, (function(idx, muted) {
+            return function() {
+                players[idx].setMuted(muted);
+                players[idx].play();
+                console.log('Twitch player ' + idx + ' ready, muted: ' + muted);
+            };
+        })(index, initialMuted));
+    });
+}
+
+// --- Kick Init ---
+function initKickPlayers(parsedStreams, mutedSet) {
+    parsedStreams.forEach(function(stream, index) {
+        if (!stream || stream.platform !== 'kick') return;
+
+        var bridgeIframe = document.getElementById('player_' + index + '_iframe');
+        if (!bridgeIframe) return;
+
+        var initialMuted = !!mutedSet[index];
+        var currentMuted = initialMuted;
+        var currentPlaying = true;
+
+        function sendToBridge(type, value) {
+            try {
+                bridgeIframe.contentWindow.postMessage(
+                    { type: type, value: value },
+                    'https://player.kick.com'
+                );
+            } catch(e) {
+                console.log('Kick ' + index + ' postMessage error: ' + e.message);
+            }
+        }
+
+        window.addEventListener('message', (function(idx, iframe, muted) {
+            var applied = false;
+            return function(e) {
+                if (applied) return;
+                if (e.data && e.data.type === 'kickBridgeReady' && e.source === iframe.contentWindow) {
+                    applied = true;
+                    sendToBridge('mute', muted);
+                    console.log('Kick ' + idx + ' bridge ready, applied muted=' + muted);
+                }
+            };
+        })(index, bridgeIframe, currentMuted));
+
+        players[index] = {
+            setMuted: function(muted) {
+                if (currentMuted === muted) return;
+                currentMuted = muted;
+                sendToBridge('mute', muted);
+                console.log('Kick ' + index + ' muted=' + muted + ' (bridge)');
+            },
+            play: function() {
+                if (currentPlaying) return;
+                currentPlaying = true;
+                sendToBridge('play', true);
+                console.log('Kick ' + index + ' play (bridge)');
+            },
+            pause: function() {
+                if (!currentPlaying) return;
+                currentPlaying = false;
+                sendToBridge('play', false);
+                console.log('Kick ' + index + ' pause (bridge)');
+            }
+        };
+    });
+}
+
+// --- Control API (called from Android evaluateJavascript) ---
+function applyMuteState(index, muted) {
+    console.log('applyMuteState called for player', index, 'muted:', muted);
+    var player = players[index];
+    if (!player) {
+        console.log('Player', index, 'not ready yet');
+        return;
+    }
+    // YouTube
+    if (player.mute && player.unMute) {
+        if (muted) player.mute(); else player.unMute();
+        console.log('YT player', index, 'mute applied:', muted);
+    }
+    // Twitch or Kick (both have setMuted)
+    else if (player.setMuted) {
+        player.setMuted(muted);
+        console.log('Player', index, 'mute applied:', muted);
+    }
+}
+
+function applyPlayState(index, playing) {
+    console.log('applyPlayState called for player', index, 'playing:', playing);
+    var player = players[index];
+    if (!player) return;
+    // YouTube
+    if (player.playVideo && player.pauseVideo) {
+        if (playing) player.playVideo(); else player.pauseVideo();
+        console.log('YT player', index, 'play applied:', playing);
+    }
+    // Twitch or Kick (both have play/pause)
+    else if (player.play && player.pause) {
+        if (playing) player.play(); else player.pause();
+        console.log('Player', index, 'play applied:', playing);
+    }
+}
+
+// --- Init ---
+function init() {
+    try {
+        var hash = window.location.hash.substring(1);
+        if (!hash) { console.log('No config in hash'); return; }
+        var json = atob(hash.replace(/-/g, '+').replace(/_/g, '/'));
+        config = JSON.parse(json);
+    } catch(e) {
+        console.log('Failed to parse config: ' + e.message);
+        return;
+    }
+
+    var streams = config.streams || [];
+    if (streams.length === 0) { console.log('No streams'); return; }
+
+    var parsedStreams = streams.map(function(url) { return parseStreamUrl(url); });
+    console.log('Parsed ' + parsedStreams.length + ' streams');
+
+    buildPlayers(parsedStreams);
+}
+
+init();
+</script>
+</body>
+</html>
