@@ -406,6 +406,34 @@ function applyPlayState(index, playing) {
     }
 }
 
+// --- Change layout without reloading (called from Android evaluateJavascript) ---
+function changeLayout(newLayout, newLandscape) {
+    config.layout = newLayout;
+    config.landscape = newLandscape;
+
+    var streams = config.streams || [];
+    var parsedStreams = streams.map(function(url) { return parseStreamUrl(url); });
+
+    var container = document.getElementById('container');
+
+    // Reset container styles
+    container.style.display = '';
+    container.style.flexDirection = '';
+    container.style.gridTemplateColumns = '';
+    container.style.gridTemplateRows = '';
+
+    // Reset child styles
+    parsedStreams.forEach(function(stream, index) {
+        var div = document.getElementById('player_' + index);
+        if (!div) return;
+        div.style.flex = '';
+        div.classList.remove('full-width');
+    });
+
+    applyLayout(parsedStreams);
+    console.log('Layout changed to ' + newLayout + ', landscape=' + newLandscape);
+}
+
 // --- Init ---
 function init() {
     try {
