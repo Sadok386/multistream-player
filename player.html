@@ -406,6 +406,124 @@ function applyPlayState(index, playing) {
     }
 }
 
+// --- Reload a single stream (called from Android evaluateJavascript) ---
+function reloadStream(index) {
+    var streams = config.streams || [];
+    if (index < 0 || index >= streams.length) return;
+
+    var stream = parseStreamUrl(streams[index]);
+    if (!stream) return;
+
+    var div = document.getElementById('player_' + index);
+    if (!div) return;
+
+    console.log('Reloading stream ' + index + ' (' + stream.platform + ': ' + stream.id + ')');
+
+    // Destroy existing player
+    var oldPlayer = players[index];
+    if (oldPlayer) {
+        if (stream.platform === 'youtube' && oldPlayer.destroy) {
+            try { oldPlayer.destroy(); } catch(e) {}
+        }
+        players[index] = null;
+    }
+
+    // Clear the container (keeps the div itself for layout)
+    div.innerHTML = '';
+
+    if (stream.platform === 'youtube') {
+        players[index] = new YT.Player('player_' + index, {
+            height: '100%',
+            width: '100%',
+            playerVars: {
+                'playsinline': 1,
+                'controls': 1,
+                'enablejsapi': 1,
+                'origin': 'https://sadok386.github.io',
+                'rel': 0,
+                'fs': 0,
+                'iv_load_policy': 3
+            },
+            events: {
+                'onReady': function(event) {
+                    event.target.loadVideoById(stream.id);
+                    event.target.mute();
+                    console.log('YT player ' + index + ' reloaded (muted, Android will re-sync)');
+                },
+                'onStateChange': function(event) {
+                    var states = {'-1':'UNSTARTED','0':'ENDED','1':'PLAYING','2':'PAUSED','3':'BUFFERING','5':'CUED'};
+                    console.log('YT player ' + index + ' state: ' + (states[event.data] || event.data));
+                },
+                'onError': function(event) {
+                    console.log('YT player ' + index + ' error: ' + event.data);
+                }
+            }
+        });
+    } else if (stream.platform === 'twitch') {
+        var opts = {
+            width: '100%',
+            height: '100%',
+            parent: ['sadok386.github.io'],
+            autoplay: true,
+            muted: true
+        };
+        if (stream.isVod) { opts.video = stream.id; }
+        else { opts.channel = stream.id; }
+
+        players[index] = new Twitch.Player('player_' + index, opts);
+        players[index].addEventListener(Twitch.Player.READY, function() {
+            players[index].setMuted(true);
+            players[index].play();
+            console.log('Twitch player ' + index + ' reloaded (muted, Android will re-sync)');
+        });
+    } else if (stream.platform === 'kick') {
+        div.innerHTML = '<iframe id="player_' + index + '_iframe" ' +
+            'src="https://player.kick.com/__kick_bridge__?channel=' + stream.id + '&muted=true" ' +
+            'allow="autoplay;encrypted-media" allowfullscreen ' +
+            'style="width:100%;height:100%;border:0"></iframe>';
+
+        var bridgeIframe = document.getElementById('player_' + index + '_iframe');
+        var currentMuted = true;
+        var currentPlaying = true;
+
+        function sendToBridge(type, value) {
+            try {
+                bridgeIframe.contentWindow.postMessage(
+                    { type: type, value: value },
+                    'https://player.kick.com'
+                );
+            } catch(e) {
+                console.log('Kick ' + index + ' postMessage error: ' + e.message);
+            }
+        }
+
+        window.addEventListener('message', function handler(e) {
+            if (e.data && e.data.type === 'kickBridgeReady' && e.source === bridgeIframe.contentWindow) {
+                window.removeEventListener('message', handler);
+                console.log('Kick ' + index + ' bridge ready after reload');
+            }
+        });
+
+        players[index] = {
+            setMuted: function(muted) {
+                if (currentMuted === muted) return;
+                currentMuted = muted;
+                sendToBridge('mute', muted);
+            },
+            play: function() {
+                if (currentPlaying) return;
+                currentPlaying = true;
+                sendToBridge('play', true);
+            },
+            pause: function() {
+                if (!currentPlaying) return;
+                currentPlaying = false;
+                sendToBridge('play', false);
+            }
+        };
+    }
+}
+
 // --- Change layout without reloading (called from Android evaluateJavascript) ---
 function changeLayout(newLayout, newLandscape) {
     config.layout = newLayout;
