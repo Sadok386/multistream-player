@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
@@ -574,6 +574,17 @@ function init() {
 }
 
 init();
+
+// Re-apply layout on resize (Android changeLayout may fire before WebView has resized)
+var _resizeTimer;
+window.addEventListener('resize', function() {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(function() {
+        if (typeof changeLayout === 'function' && config) {
+            changeLayout(config.layout || 'grid', !!config.landscape);
+        }
+    }, 150);
+});
 </script>
 </body>
 </html>
