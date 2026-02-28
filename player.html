@@ -33,6 +33,11 @@ html, body {
 var players = [];
 var config = {};
 
+function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+              .replace(/"/g,'&quot;').replace(/'/g,'&#x27;');
+}
+
 // --- URL Parsing (mirrors StreamUrlParser.parse()) ---
 function parseStreamUrl(url) {
     var clean = url.trim()
@@ -190,8 +195,9 @@ function buildPlayers(parsedStreams) {
 
         if (stream.platform === 'kick') {
             var muted = mutedSet[index] ? 'true' : 'false';
+            var safeId = escapeHtml(encodeURIComponent(stream.id));
             div.innerHTML = '<iframe id="player_' + index + '_iframe" ' +
-                'src="https://player.kick.com/__kick_bridge__?channel=' + stream.id + '&muted=' + muted + '" ' +
+                'src="https://player.kick.com/__kick_bridge__?channel=' + safeId + '&muted=' + muted + '" ' +
                 'allow="autoplay;encrypted-media" allowfullscreen ' +
                 'style="width:100%;height:100%;border:0"></iframe>';
         }
@@ -339,6 +345,7 @@ function initKickPlayers(parsedStreams, mutedSet) {
             var applied = false;
             return function(e) {
                 if (applied) return;
+                if (e.origin !== 'https://player.kick.com') return;
                 if (e.data && e.data.type === 'kickBridgeReady' && e.source === iframe.contentWindow) {
                     applied = true;
                     sendToBridge('mute', muted);
@@ -477,8 +484,9 @@ function reloadStream(index) {
             console.log('Twitch player ' + index + ' reloaded (muted, Android will re-sync)');
         });
     } else if (stream.platform === 'kick') {
+        var safeId = escapeHtml(encodeURIComponent(stream.id));
         div.innerHTML = '<iframe id="player_' + index + '_iframe" ' +
-            'src="https://player.kick.com/__kick_bridge__?channel=' + stream.id + '&muted=true" ' +
+            'src="https://player.kick.com/__kick_bridge__?channel=' + safeId + '&muted=true" ' +
             'allow="autoplay;encrypted-media" allowfullscreen ' +
             'style="width:100%;height:100%;border:0"></iframe>';
 
@@ -498,6 +506,7 @@ function reloadStream(index) {
         }
 
         window.addEventListener('message', function handler(e) {
+            if (e.origin !== 'https://player.kick.com') return;
             if (e.data && e.data.type === 'kickBridgeReady' && e.source === bridgeIframe.contentWindow) {
                 window.removeEventListener('message', handler);
                 console.log('Kick ' + index + ' bridge ready after reload');
