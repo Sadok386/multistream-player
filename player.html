@@ -408,23 +408,19 @@ function applyVolume(index, volume) {
         console.log('Player', index, 'not ready yet');
         return;
     }
-    var isMuted = volume === 0;
-    // YouTube (0-100 native)
-    if (player.setVolume && player.mute) {
+    // YouTube (0-100 native) — detect via mute+unMute (Twitch has no unMute)
+    if (player.setVolume && player.mute && player.unMute) {
         player.setVolume(volume);
-        if (isMuted) player.mute(); else player.unMute();
         console.log('YT player', index, 'volume applied:', volume);
     }
-    // Twitch (0.0-1.0)
+    // Twitch (0.0-1.0) — detect via setMuted (no mute/unMute methods)
     else if (player.setVolume && player.setMuted) {
         player.setVolume(volume / 100);
-        player.setMuted(isMuted);
         console.log('Twitch player', index, 'volume applied:', volume / 100);
     }
     // Kick (via bridge)
     else if (player._sendVolume) {
         player._sendVolume(volume / 100);
-        player.setMuted(isMuted);
         console.log('Kick player', index, 'volume applied:', volume / 100);
     }
 }
