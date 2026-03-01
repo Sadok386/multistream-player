@@ -361,6 +361,10 @@ function initKickPlayers(parsedStreams, mutedSet) {
                 sendToBridge('mute', muted);
                 console.log('Kick ' + index + ' muted=' + muted + ' (bridge)');
             },
+            _sendVolume: function(vol) {
+                sendToBridge('volume', vol);
+                console.log('Kick ' + index + ' volume=' + vol + ' (bridge)');
+            },
             play: function() {
                 if (currentPlaying) return;
                 currentPlaying = true;
@@ -394,6 +398,34 @@ function applyMuteState(index, muted) {
     else if (player.setMuted) {
         player.setMuted(muted);
         console.log('Player', index, 'mute applied:', muted);
+    }
+}
+
+function applyVolume(index, volume) {
+    console.log('applyVolume called for player', index, 'volume:', volume);
+    var player = players[index];
+    if (!player) {
+        console.log('Player', index, 'not ready yet');
+        return;
+    }
+    var isMuted = volume === 0;
+    // YouTube (0-100 native)
+    if (player.setVolume && player.mute) {
+        player.setVolume(volume);
+        if (isMuted) player.mute(); else player.unMute();
+        console.log('YT player', index, 'volume applied:', volume);
+    }
+    // Twitch (0.0-1.0)
+    else if (player.setVolume && player.setMuted) {
+        player.setVolume(volume / 100);
+        player.setMuted(isMuted);
+        console.log('Twitch player', index, 'volume applied:', volume / 100);
+    }
+    // Kick (via bridge)
+    else if (player._sendVolume) {
+        player._sendVolume(volume / 100);
+        player.setMuted(isMuted);
+        console.log('Kick player', index, 'volume applied:', volume / 100);
     }
 }
 
@@ -519,6 +551,9 @@ function reloadStream(index) {
                 currentMuted = muted;
                 sendToBridge('mute', muted);
             },
+            _sendVolume: function(vol) {
+                sendToBridge('volume', vol);
+            },
             play: function() {
                 if (currentPlaying) return;
                 currentPlaying = true;
@@ -580,6 +615,20 @@ function init() {
     console.log('Parsed ' + parsedStreams.length + ' streams');
 
     buildPlayers(parsedStreams);
+
+    // Apply initial volumes from config (after players have initialized)
+    if (config.volumes) {
+        setTimeout(function() {
+            for (var key in config.volumes) {
+                var idx = parseInt(key, 10);
+                var vol = config.volumes[key];
+                if (!isNaN(idx) && typeof vol === 'number') {
+                    applyVolume(idx, vol);
+                }
+            }
+            console.log('Initial volumes applied from config');
+        }, 2000);
+    }
 }
 
 init();
